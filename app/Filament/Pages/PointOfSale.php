@@ -62,16 +62,9 @@ class PointOfSale extends Page
         $product = Product::with('optionGroups.options')->find($productId);
         if (!$product) return;
 
-        // Jika produk tidak punya opsi, langsung masukkan ke keranjang
-        if ($product->optionGroups->isEmpty()) {
-            $this->addToCart($product, []); // Panggil addToCart dengan opsi kosong
-            return;
-        }
-
-        // Jika punya opsi, tampilkan modal
         $this->selectedProduct = $product;
         $this->showOptionsModal = true;
-        $this->reset('selectedOptions', 'notes', 'optionsTotal'); // Reset state modal
+        $this->reset('selectedOptions', 'notes', 'optionsTotal');
     }
 
     public function updatedSelectedOptions(): void
@@ -81,17 +74,17 @@ class PointOfSale extends Page
 
         foreach ($this->selectedProduct->optionGroups as $group) {
             if (isset($this->selectedOptions[$group->id])) {
-                if (is_array($this->selectedOptions[$group->id])) { // Untuk Checkbox
+                if (is_array($this->selectedOptions[$group->id])) {
                     foreach ($this->selectedOptions[$group->id] as $optionId => $value) {
                         if ($value) {
                             $option = $group->options->find($optionId);
-                            $this->optionsTotal += $option->price;
+                            if ($option) $this->optionsTotal += $option->price;
                         }
                     }
-                } else { // Untuk Radio
+                } else {
                     $optionId = $this->selectedOptions[$group->id];
                     $option = $group->options->find($optionId);
-                    $this->optionsTotal += $option->price;
+                    if ($option) $this->optionsTotal += $option->price;
                 }
             }
         }
@@ -103,33 +96,10 @@ class PointOfSale extends Page
 
         $product = $this->selectedProduct;
         $options = $this->selectedOptions;
-        $notes = $this->notes;
+        $notes = trim($this->notes); // Hilangkan spasi di awal/akhir catatan
 
-        $optionsText = [];
-        $optionsPrice = 0;
-
-        foreach ($options as $groupId => $optionValue) {
-            $group = $product->optionGroups->find($groupId);
-            if ($group->type === 'radio') {
-                $option = $group->options->find($optionValue);
-                $optionsText[$group->name] = $option->name;
-                $optionsPrice += $option->price;
-            } else { // checkbox
-                $selected = [];
-                foreach ($optionValue as $optionId => $isSelected) {
-                    if ($isSelected) {
-                        $option = $group->options->find($optionId);
-                        $selected[] = $option->name;
-                        $optionsPrice += $option->price;
-                    }
-                }
-                if (!empty($selected)) {
-                    $optionsText[$group->name] = implode(', ', $selected);
-                }
-            }
-        }
-
-        // Membuat ID unik untuk keranjang berdasarkan produk dan opsinya
+        // Membuat ID unik untuk keranjang berdasarkan produk, opsi, dan catatan.
+        // Jika catatan kosong, produk yang sama akan digabung.
         $cartId = md5($product->id . json_encode($options) . $notes);
 
         if ($this->cart->has($cartId)) {
@@ -137,14 +107,37 @@ class PointOfSale extends Page
             $item['quantity']++;
             $this->cart->put($cartId, $item);
         } else {
+            $optionsText = [];
+            $optionsPrice = 0;
+
+            foreach ($options as $groupId => $optionValue) {
+                $group = $product->optionGroups->find($groupId);
+                if ($group->type === 'radio') {
+                    $option = $group->options->find($optionValue);
+                    $optionsText[$group->name] = $option->name;
+                    $optionsPrice += $option->price;
+                } else {
+                    $selected = [];
+                    foreach ($optionValue as $optionId => $isSelected) {
+                        if ($isSelected) {
+                            $option = $group->options->find($optionId);
+                            $selected[] = $option->name;
+                            $optionsPrice += $option->price;
+                        }
+                    }
+                    if (!empty($selected)) {
+                        $optionsText[$group->name] = implode(', ', $selected);
+                    }
+                }
+            }
             $this->cart->put($cartId, [
                 'product_id'   => $product->id,
                 'name'         => $product->name,
                 'price'        => $product->selling_price,
                 'options_price' => $optionsPrice,
                 'quantity'     => 1,
-                'options_text' => $optionsText, // Opsi dalam bentuk teks untuk ditampilkan
-                'options_raw'  => $options,      // Opsi dalam bentuk array untuk disimpan
+                'options_text' => $optionsText,
+                'options_raw'  => $options,
                 'notes'        => $notes,
             ]);
         }
@@ -184,19 +177,25 @@ class PointOfSale extends Page
     public function updateQuantity(string $cartId, string $type): void
     {
         if (!$this->cart->has($cartId)) return;
+
         $item = $this->cart->get($cartId);
-        $product = Product::find($item['product_id']);
 
         if ($type === 'increment') {
+            $product = Product::find($item['product_id']);
             if ($item['quantity'] + 1 > $product->stock) {
                 Notification::make()->title('Jumlah melebihi stok!')->warning()->send();
                 return;
             }
             $item['quantity']++;
-        } elseif ($type === 'decrement' && $item['quantity'] > 1) {
-            $item['quantity']--;
+            $this->cart->put($cartId, $item);
+        } elseif ($type === 'decrement') {
+            if ($item['quantity'] > 1) {
+                $item['quantity']--;
+                $this->cart->put($cartId, $item);
+            } else {
+                $this->cart->forget($cartId); // Hapus item jika kuantitasnya 1
+            }
         }
-        $this->cart->put($cartId, $item);
         $this->calculateTotal();
     }
 

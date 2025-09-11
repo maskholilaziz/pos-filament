@@ -12,9 +12,9 @@ class OrderItem extends Model
 
     protected $guarded = [];
 
-    // protected $casts = [
-    //     'selected_options' => 'array',
-    // ];
+    protected $casts = [
+        'selected_options' => 'array',
+    ];
 
     public function order(): BelongsTo
     {

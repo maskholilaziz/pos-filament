@@ -73,10 +73,10 @@ class OrderResource extends Resource
                                 Infolists\Components\TextEntry::make('custom_details')
                                     ->label('Detail')
                                     ->html()
-                                    ->state(fn($record) => $record['selected_options'] ?? null)
+                                    ->state(fn($record) => $record ?? null)
                                     ->formatStateUsing(function ($record) {
                                         $details = [];
-                                        $options = json_decode($record->selected_options, true) ?? [];
+                                        $options = $record->selected_options ?? [];
                                         if (!empty($options) && is_array($options)) {
                                             foreach ($options as $groupId => $optionValue) {
                                                 $group = OptionGroup::find($groupId);
