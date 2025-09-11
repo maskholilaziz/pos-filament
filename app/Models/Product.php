@@ -42,4 +42,10 @@ class Product extends Model
     {
         return $this->belongsToMany(OptionGroup::class, 'product_option');
     }
+
+    public function bundles(): BelongsToMany
+    {
+        return $this->belongsToMany(Bundle::class, 'bundle_product')
+            ->withPivot('quantity');
+    }
 }
