@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use Filament\Forms;
 use Filament\Tables;
 use App\Models\Product;
+use App\Models\OptionGroup;
 use Filament\Forms\Form;
 use Filament\Tables\Table;
 use Filament\Resources\Resource;
@@ -46,6 +47,11 @@ class ProductResource extends Resource
                 Forms\Components\Toggle::make('is_active')
                     ->label('Aktifkan Produk')
                     ->default(true),
+                Forms\Components\CheckboxList::make('optionGroups')
+                    ->relationship('optionGroups', 'name')
+                    ->label('Grup Opsi yang Tersedia')
+                    ->columns(2)
+                    ->helperText('Pilih grup opsi yang bisa dipilih pelanggan untuk produk ini.'),
             ]);
     }
 

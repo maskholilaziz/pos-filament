@@ -12,17 +12,15 @@ class OrderItem extends Model
 
     protected $guarded = [];
 
-    /**
-     * Relasi ke Order: Satu Item dimiliki oleh satu Order.
-     */
+    // protected $casts = [
+    //     'selected_options' => 'array',
+    // ];
+
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
     }
 
-    /**
-     * Relasi ke Product: Satu Item merujuk ke satu Product.
-     */
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);

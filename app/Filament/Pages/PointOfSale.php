@@ -20,10 +20,16 @@ class PointOfSale extends Page
     protected static ?string $navigationLabel = 'POS';
     protected static ?int $navigationSort = -1;
 
+    public ?Product $selectedProduct = null;
+    public bool $showOptionsModal = false;
+    public array $selectedOptions = [];
+    public string $notes = '';
+
     public ?int $selectedCategory = null;
     public string $search = '';
     public Collection $cart;
     public float $total = 0.00;
+    public float $optionsTotal = 0.00;
 
     public function mount(): void
     {
@@ -37,7 +43,7 @@ class PointOfSale extends Page
 
     public function getProductsProperty()
     {
-        return Product::query()
+        return Product::with('optionGroups') // Eager load relasi
             ->where('is_active', true)
             ->whereHas('category', fn($q) => $q->where('is_active', true))
             ->when($this->selectedCategory, fn($q) => $q->where('category_id', $this->selectedCategory))
@@ -51,70 +57,158 @@ class PointOfSale extends Page
         $this->selectedCategory = $categoryId;
     }
 
-    // == METHOD YANG DIPERBAIKI 1 ==
-    public function addToCart(int $productId): void
+    public function selectProduct(int $productId): void
     {
-        $product = Product::find($productId);
-        if (!$product || $product->stock <= 0) {
-            Notification::make()->title('Stok produk habis!')->warning()->send();
+        $product = Product::with('optionGroups.options')->find($productId);
+        if (!$product) return;
+
+        // Jika produk tidak punya opsi, langsung masukkan ke keranjang
+        if ($product->optionGroups->isEmpty()) {
+            $this->addToCart($product, []); // Panggil addToCart dengan opsi kosong
             return;
         }
 
-        if ($this->cart->has($productId)) {
-            $item = $this->cart->get($productId); // Ambil item
+        // Jika punya opsi, tampilkan modal
+        $this->selectedProduct = $product;
+        $this->showOptionsModal = true;
+        $this->reset('selectedOptions', 'notes', 'optionsTotal'); // Reset state modal
+    }
 
-            if ($item['quantity'] + 1 > $product->stock) {
-                Notification::make()->title('Jumlah melebihi stok!')->warning()->send();
-                return;
+    public function updatedSelectedOptions(): void
+    {
+        $this->optionsTotal = 0;
+        if (!$this->selectedProduct) return;
+
+        foreach ($this->selectedProduct->optionGroups as $group) {
+            if (isset($this->selectedOptions[$group->id])) {
+                if (is_array($this->selectedOptions[$group->id])) { // Untuk Checkbox
+                    foreach ($this->selectedOptions[$group->id] as $optionId => $value) {
+                        if ($value) {
+                            $option = $group->options->find($optionId);
+                            $this->optionsTotal += $option->price;
+                        }
+                    }
+                } else { // Untuk Radio
+                    $optionId = $this->selectedOptions[$group->id];
+                    $option = $group->options->find($optionId);
+                    $this->optionsTotal += $option->price;
+                }
             }
+        }
+    }
 
-            $item['quantity']++; // Ubah di variabel sementara
-            $this->cart->put($productId, $item); // Masukkan kembali
+    public function addToCartFromModal(): void
+    {
+        if (!$this->selectedProduct) return;
+
+        $product = $this->selectedProduct;
+        $options = $this->selectedOptions;
+        $notes = $this->notes;
+
+        $optionsText = [];
+        $optionsPrice = 0;
+
+        foreach ($options as $groupId => $optionValue) {
+            $group = $product->optionGroups->find($groupId);
+            if ($group->type === 'radio') {
+                $option = $group->options->find($optionValue);
+                $optionsText[$group->name] = $option->name;
+                $optionsPrice += $option->price;
+            } else { // checkbox
+                $selected = [];
+                foreach ($optionValue as $optionId => $isSelected) {
+                    if ($isSelected) {
+                        $option = $group->options->find($optionId);
+                        $selected[] = $option->name;
+                        $optionsPrice += $option->price;
+                    }
+                }
+                if (!empty($selected)) {
+                    $optionsText[$group->name] = implode(', ', $selected);
+                }
+            }
+        }
+
+        // Membuat ID unik untuk keranjang berdasarkan produk dan opsinya
+        $cartId = md5($product->id . json_encode($options) . $notes);
+
+        if ($this->cart->has($cartId)) {
+            $item = $this->cart->get($cartId);
+            $item['quantity']++;
+            $this->cart->put($cartId, $item);
         } else {
-            $this->cart->put($productId, [
-                'product_id' => $product->id,
-                'name'       => $product->name,
-                'price'      => $product->selling_price,
-                'quantity'   => 1,
-                'stock'      => $product->stock,
+            $this->cart->put($cartId, [
+                'product_id'   => $product->id,
+                'name'         => $product->name,
+                'price'        => $product->selling_price,
+                'options_price' => $optionsPrice,
+                'quantity'     => 1,
+                'options_text' => $optionsText, // Opsi dalam bentuk teks untuk ditampilkan
+                'options_raw'  => $options,      // Opsi dalam bentuk array untuk disimpan
+                'notes'        => $notes,
+            ]);
+        }
+
+        $this->calculateTotal();
+        $this->closeOptionsModal();
+    }
+
+    public function addToCart(Product $product): void
+    {
+        $cartId = md5($product->id . '[]'); // ID unik untuk produk tanpa opsi
+        if ($this->cart->has($cartId)) {
+            $item = $this->cart->get($cartId);
+            $item['quantity']++;
+            $this->cart->put($cartId, $item);
+        } else {
+            $this->cart->put($cartId, [
+                'product_id'   => $product->id,
+                'name'         => $product->name,
+                'price'        => $product->selling_price,
+                'options_price' => 0,
+                'quantity'     => 1,
+                'options_text' => [],
+                'options_raw'  => [],
+                'notes'        => '',
             ]);
         }
         $this->calculateTotal();
     }
 
-    // == METHOD YANG DIPERBAIKI 2 ==
-    public function updateQuantity(int $productId, string $type): void
+    public function closeOptionsModal(): void
     {
-        if (!$this->cart->has($productId)) {
-            return;
-        }
+        $this->showOptionsModal = false;
+        $this->reset('selectedProduct', 'selectedOptions', 'notes', 'optionsTotal');
+    }
 
-        $item = $this->cart->get($productId); // Ambil item
-        $product = Product::find($productId);
+    public function updateQuantity(string $cartId, string $type): void
+    {
+        if (!$this->cart->has($cartId)) return;
+        $item = $this->cart->get($cartId);
+        $product = Product::find($item['product_id']);
 
         if ($type === 'increment') {
             if ($item['quantity'] + 1 > $product->stock) {
                 Notification::make()->title('Jumlah melebihi stok!')->warning()->send();
                 return;
             }
-            $item['quantity']++; // Ubah di variabel sementara
+            $item['quantity']++;
         } elseif ($type === 'decrement' && $item['quantity'] > 1) {
-            $item['quantity']--; // Ubah di variabel sementara
+            $item['quantity']--;
         }
-
-        $this->cart->put($productId, $item); // Masukkan kembali
+        $this->cart->put($cartId, $item);
         $this->calculateTotal();
     }
 
-    public function removeFromCart(int $productId): void
+    public function removeFromCart(string $cartId): void
     {
-        $this->cart->forget($productId); // Gunakan method forget() untuk Collection
+        $this->cart->forget($cartId);
         $this->calculateTotal();
     }
 
     protected function calculateTotal(): void
     {
-        $this->total = $this->cart->sum(fn($item) => $item['price'] * $item['quantity']);
+        $this->total = $this->cart->sum(fn($item) => ($item['price'] + $item['options_price']) * $item['quantity']);
     }
 
     public function clearCart(): void
@@ -126,8 +220,7 @@ class PointOfSale extends Page
     protected function getActions(): array
     {
         return [
-            'process_payment' => Action::make('process_payment')
-                ->label('Proses Pembayaran')->color('success')->icon('heroicon-o-currency-dollar')->requiresConfirmation()->modalHeading('Konfirmasi Pembayaran')
+            'process_payment' => Action::make('process_payment')->label('Proses Pembayaran')->color('success')->icon('heroicon-o-currency-dollar')->requiresConfirmation()->modalHeading('Konfirmasi Pembayaran')
                 ->form([
                     TextInput::make('customer_name')->label('Nama Pelanggan')->default('Pelanggan'),
                     TextInput::make('amount_paid')->label('Uang Dibayar')->numeric()->required()->prefix('Rp'),
@@ -153,13 +246,16 @@ class PointOfSale extends Page
                     'amount_paid'    => $data['amount_paid'],
                     'change'         => $data['amount_paid'] - $this->total,
                 ]);
+
                 foreach ($this->cart as $item) {
                     $order->items()->create([
-                        'product_id'   => $item['product_id'],
-                        'product_name' => $item['name'],
-                        'quantity'     => $item['quantity'],
-                        'unit_price'   => $item['price'],
-                        'total_price'  => $item['price'] * $item['quantity'],
+                        'product_id'        => $item['product_id'],
+                        'product_name'      => $item['name'],
+                        'quantity'          => $item['quantity'],
+                        'unit_price'        => $item['price'] + $item['options_price'],
+                        'total_price'       => ($item['price'] + $item['options_price']) * $item['quantity'],
+                        'selected_options'  => $item['options_raw'], // Simpan data mentah opsi
+                        'notes'             => $item['notes'],       // Simpan catatan
                     ]);
                     Product::find($item['product_id'])->decrement('stock', $item['quantity']);
                 }
