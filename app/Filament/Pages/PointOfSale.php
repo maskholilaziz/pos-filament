@@ -2,18 +2,19 @@
 
 namespace App\Filament\Pages;
 
-use App\Models\Bundle;
-use App\Models\Category;
 use App\Models\Order;
+use App\Models\Bundle;
 use App\Models\Product;
-use Filament\Actions\Action;
-use Filament\Forms\Components\TextInput;
-use Filament\Notifications\Notification;
+use App\Models\Category;
 use Filament\Pages\Page;
+use App\Models\Ingredient;
+use Filament\Actions\Action;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Filament\Forms\Components\TextInput;
+use Filament\Notifications\Notification;
 
 class PointOfSale extends Page
 {
@@ -50,31 +51,43 @@ class PointOfSale extends Page
     // Mengambil data Produk
     public function getProductsProperty()
     {
-        return Product::query()
+        $products = Product::with(['ingredients', 'optionGroups'])
             ->where('is_active', true)
             ->whereHas('category', fn($q) => $q->where('is_active', true))
             ->when($this->selectedCategory, fn($q) => $q->where('category_id', $this->selectedCategory))
             ->when($this->search, fn($q) => $q->where('name', 'like', '%' . $this->search . '%'))
             ->orderBy('name')
             ->get();
+
+        // Tambahkan properti virtual 'can_be_sold' ke setiap produk
+        $products->each(function ($product) {
+            $product->can_be_sold = true;
+            // Jika produk punya resep, cek stok bahan bakunya
+            if ($product->ingredients->isNotEmpty()) {
+                foreach ($product->ingredients as $ingredient) {
+                    if ($ingredient->stock < $ingredient->pivot->quantity_used) {
+                        $product->can_be_sold = false;
+                        break;
+                    }
+                }
+            }
+        });
+
+        return $products;
     }
 
     // Mengambil data Paket Promo yang aktif
     public function getBundlesProperty()
     {
         $today = now()->toDateString();
-
-        $bundles = Bundle::query()
-            ->with('products') // Eager load relasi produk
+        $bundles = Bundle::with('products.ingredients') // Eager load resep dari komponen
             ->where('is_active', true)
             // ->where(function ($query) use ($today) {
             //     $query->where(function ($subQuery) use ($today) {
-            //         $subQuery->where('start_date', '<=', $today)
-            //             ->where('end_date', '>=', $today);
+            //         $subQuery->where('start_date', '<=', $today)->where('end_date', '>=', $today);
             //     })
             //         ->orWhere(function ($subQuery) {
-            //             $subQuery->whereNull('start_date')
-            //                 ->whereNull('end_date');
+            //             $subQuery->whereNull('start_date')->whereNull('end_date');
             //         });
             // })
             ->when($this->search, fn($q) => $q->where('name', 'like', '%' . $this->search . '%'))
@@ -82,13 +95,15 @@ class PointOfSale extends Page
             ->orderBy('name')
             ->get();
 
-        // Tambahkan properti virtual 'can_be_sold' ke setiap bundle
         $bundles->each(function ($bundle) {
             $bundle->can_be_sold = true;
             foreach ($bundle->products as $product) {
-                if ($product->stock < $product->pivot->quantity) {
-                    $bundle->can_be_sold = false;
-                    break; // Hentikan pengecekan jika satu komponen saja tidak cukup
+                // Cek resep dari setiap produk di dalam bundle
+                foreach ($product->ingredients as $ingredient) {
+                    if ($ingredient->stock < $ingredient->pivot->quantity_used * $product->pivot->quantity) {
+                        $bundle->can_be_sold = false;
+                        return false; // Hentikan loop untuk bundle ini
+                    }
                 }
             }
         });
@@ -150,9 +165,65 @@ class PointOfSale extends Page
         $item = $this->selectedItem;
         $type = $this->selectedItemType;
         $notes = trim($this->notes);
+        $options = $this->selectedOptions;
+        $cartId = md5($type . $item->id . json_encode($options) . $notes);
 
-        $cartId = md5($type . $item->id . json_encode($this->selectedOptions) . $notes);
+        // --- Logika baru pengecekan stok total sebelum menambah ---
+        $requiredIngredients = collect();
 
+        // 1. Kumpulkan kebutuhan dari keranjang yang sudah ada
+        foreach ($this->cart as $cartItem) {
+            $quantityInCart = $cartItem['quantity'];
+            // Jika item yang akan ditambah sudah ada di keranjang, simulasikan penambahannya
+            if ($this->cart->has($cartId) && $cartItem === $this->cart->get($cartId)) {
+                $quantityInCart++;
+            }
+
+            if ($cartItem['item_type'] === 'product') {
+                $product = Product::with('ingredients')->find($cartItem['item_id']);
+                foreach ($product->ingredients as $ingredient) {
+                    $requiredIngredients[$ingredient->id] = ($requiredIngredients[$ingredient->id] ?? 0) + ($ingredient->pivot->quantity_used * $quantityInCart);
+                }
+            } elseif ($cartItem['item_type'] === 'bundle') {
+                $bundle = Bundle::with('products.ingredients')->find($cartItem['item_id']);
+                foreach ($bundle->products as $productComponent) {
+                    foreach ($productComponent->ingredients as $ingredient) {
+                        $totalUsed = $ingredient->pivot->quantity_used * $productComponent->pivot->quantity * $quantityInCart;
+                        $requiredIngredients[$ingredient->id] = ($requiredIngredients[$ingredient->id] ?? 0) + $totalUsed;
+                    }
+                }
+            }
+        }
+
+        // 2. Jika item yang akan ditambah belum ada di keranjang, tambahkan kebutuhannya
+        if (!$this->cart->has($cartId)) {
+            if ($type === 'product') {
+                foreach ($item->ingredients as $ingredient) {
+                    $requiredIngredients[$ingredient->id] = ($requiredIngredients[$ingredient->id] ?? 0) + $ingredient->pivot->quantity_used;
+                }
+            } elseif ($type === 'bundle') {
+                foreach ($item->products as $productComponent) {
+                    foreach ($productComponent->ingredients as $ingredient) {
+                        $totalUsed = $ingredient->pivot->quantity_used * $productComponent->pivot->quantity;
+                        $requiredIngredients[$ingredient->id] = ($requiredIngredients[$ingredient->id] ?? 0) + $totalUsed;
+                    }
+                }
+            }
+        }
+
+        // 3. Cek apakah kebutuhan melebihi stok
+        if ($requiredIngredients->isNotEmpty()) {
+            $ingredientsInStock = Ingredient::whereIn('id', $requiredIngredients->keys())->pluck('stock', 'id');
+            foreach ($requiredIngredients as $id => $needed) {
+                if ($ingredientsInStock[$id] < $needed) {
+                    Notification::make()->title('Stok bahan baku tidak cukup!')->body("Maksimal pesanan untuk bahan ini telah tercapai di keranjang.")->warning()->send();
+                    $this->closeOptionsModal(); // Tutup modal setelah notifikasi
+                    return;
+                }
+            }
+        }
+
+        // 4. Jika semua bahan baku tersedia, lanjutkan proses penambahan ke keranjang
         if ($this->cart->has($cartId)) {
             $cartItem = $this->cart->get($cartId);
             $cartItem['quantity']++;
@@ -216,25 +287,55 @@ class PointOfSale extends Page
 
         $item = $this->cart->get($cartId);
 
-        if ($type === 'increment') {
-            if ($item['item_type'] === 'product') {
-                $product = Product::find($item['item_id']);
-                if ($item['quantity'] + 1 > $product->stock) {
-                    Notification::make()->title('Jumlah melebihi stok!')->warning()->send();
-                    return;
-                }
-            }
-            $item['quantity']++;
-            $this->cart->put($cartId, $item);
-        } elseif ($type === 'decrement') {
+        if ($type === 'decrement') {
             if ($item['quantity'] > 1) {
                 $item['quantity']--;
                 $this->cart->put($cartId, $item);
             } else {
                 $this->cart->forget($cartId);
             }
+            $this->calculateTotal();
+            return;
         }
-        $this->calculateTotal();
+
+        // --- Logika baru untuk INCREMENT ---
+        if ($type === 'increment') {
+            // 1. Kumpulkan semua bahan baku yang dibutuhkan untuk SELURUH keranjang
+            $requiredIngredients = collect();
+
+            foreach ($this->cart as $cartItem) {
+                $quantityInCart = ($cartItem === $item) ? $cartItem['quantity'] + 1 : $cartItem['quantity'];
+
+                if ($cartItem['item_type'] === 'product') {
+                    $product = Product::with('ingredients')->find($cartItem['item_id']);
+                    foreach ($product->ingredients as $ingredient) {
+                        $requiredIngredients[$ingredient->id] = ($requiredIngredients[$ingredient->id] ?? 0) + ($ingredient->pivot->quantity_used * $quantityInCart);
+                    }
+                } elseif ($cartItem['item_type'] === 'bundle') {
+                    $bundle = Bundle::with('products.ingredients')->find($cartItem['item_id']);
+                    foreach ($bundle->products as $productComponent) {
+                        foreach ($productComponent->ingredients as $ingredient) {
+                            $totalUsed = $ingredient->pivot->quantity_used * $productComponent->pivot->quantity * $quantityInCart;
+                            $requiredIngredients[$ingredient->id] = ($requiredIngredients[$ingredient->id] ?? 0) + $totalUsed;
+                        }
+                    }
+                }
+            }
+
+            // 2. Cek apakah kebutuhan melebihi stok
+            $ingredientsInStock = Ingredient::whereIn('id', $requiredIngredients->keys())->pluck('stock', 'id');
+            foreach ($requiredIngredients as $id => $needed) {
+                if ($ingredientsInStock[$id] < $needed) {
+                    Notification::make()->title('Stok bahan baku tidak cukup!')->body("Maksimal pesanan untuk bahan ini telah tercapai di keranjang.")->warning()->send();
+                    return; // Hentikan proses jika satu bahan saja tidak cukup
+                }
+            }
+
+            // 3. Jika semua bahan baku tersedia, tambahkan jumlahnya
+            $item['quantity']++;
+            $this->cart->put($cartId, $item);
+            $this->calculateTotal();
+        }
     }
 
     public function removeFromCart(string $cartId): void
@@ -296,11 +397,21 @@ class PointOfSale extends Page
                     ]);
 
                     if ($item['item_type'] === 'product') {
-                        Product::find($item['item_id'])->decrement('stock', $item['quantity']);
+                        $product = Product::with('ingredients')->find($item['item_id']);
+                        if ($product) {
+                            foreach ($product->ingredients as $ingredient) {
+                                $ingredient->decrement('stock', $ingredient->pivot->quantity_used * $item['quantity']);
+                            }
+                        }
                     } elseif ($item['item_type'] === 'bundle') {
-                        $bundle = Bundle::with('products')->find($item['item_id']);
-                        foreach ($bundle->products as $product) {
-                            $product->decrement('stock', $product->pivot->quantity * $item['quantity']);
+                        $bundle = Bundle::with('products.ingredients')->find($item['item_id']);
+                        if ($bundle) {
+                            foreach ($bundle->products as $productComponent) {
+                                foreach ($productComponent->ingredients as $ingredient) {
+                                    $quantityToDecrement = $ingredient->pivot->quantity_used * $productComponent->pivot->quantity * $item['quantity'];
+                                    $ingredient->decrement('stock', $quantityToDecrement);
+                                }
+                            }
                         }
                     }
                 }

@@ -17,7 +17,6 @@ class Product extends Model
         'description',
         'purchase_price',
         'selling_price',
-        'stock',
         'category_id',
         'is_active'
     ];
@@ -47,5 +46,11 @@ class Product extends Model
     {
         return $this->belongsToMany(Bundle::class, 'bundle_product')
             ->withPivot('quantity');
+    }
+
+    public function ingredients(): BelongsToMany
+    {
+        return $this->belongsToMany(Ingredient::class, 'product_ingredient')
+            ->withPivot('quantity_used');
     }
 }

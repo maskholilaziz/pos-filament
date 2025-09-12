@@ -38,7 +38,7 @@
                     </x-filament::input.wrapper>
                 </div>
 
-                {{-- Grid Produk & Paket --}}
+                {{-- ===== GRID PRODUK & PAKET DENGAN TAMPILAN BARU ===== --}}
                 <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[60vh] overflow-y-auto pr-2">
                     {{-- Loop untuk Paket Promo --}}
                     @foreach ($this->bundles as $bundle)
@@ -49,51 +49,41 @@
                                     $bundle->can_be_sold,
                                 'opacity-50 grayscale cursor-not-allowed dark:bg-gray-800/50 dark:border-gray-700' => !$bundle->can_be_sold,
                             ])>
-
                             <div class="flex-grow">
                                 <p class="font-bold text-gray-900 dark:text-gray-200">{{ $bundle->name }}</p>
                                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                    {{ Str::limit($bundle->description, 60) }}
-                                </p>
+                                    {{ Str::limit($bundle->description, 60) }}</p>
                             </div>
-
                             <p class="mt-3 text-sm font-extrabold text-amber-600">
-                                {{ \Illuminate\Support\Number::currency($bundle->price ?? 0, 'IDR', 'id') }}
-                            </p>
-
+                                {{ \Illuminate\Support\Number::currency($bundle->price ?? 0, 'IDR', 'id') }}</p>
                             <span
-                                class="absolute -top-2 -right-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/10 dark:bg-amber-900 dark:text-amber-300">
-                                Paket
-                            </span>
+                                class="absolute -top-2 -right-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/10 dark:bg-amber-900 dark:text-amber-300">Paket</span>
                         </div>
                     @endforeach
 
                     {{-- Loop untuk Produk Biasa --}}
                     @forelse ($this->products as $product)
-                        <div wire:click="{{ $product->stock > 0 ? 'selectItem(' . $product->id . ', \'product\')' : '' }}"
+                        <div wire:click="{{ $product->can_be_sold ? 'selectItem(' . $product->id . ', \'product\')' : '' }}"
                             @class([
                                 'relative flex flex-col rounded-lg border bg-white p-4 shadow-sm transition',
                                 'cursor-pointer hover:border-primary-500 hover:ring-2 hover:ring-primary-500 dark:bg-gray-800 dark:border-gray-700' =>
-                                    $product->stock > 0,
-                                'opacity-50 grayscale cursor-not-allowed dark:bg-gray-800/50 dark:border-gray-700' =>
-                                    $product->stock <= 0,
+                                    $product->can_be_sold,
+                                'opacity-50 grayscale cursor-not-allowed dark:bg-gray-800/50 dark:border-gray-700' => !$product->can_be_sold,
                             ])>
-
                             <div class="flex-grow">
                                 <p class="font-bold text-gray-900 dark:text-gray-200">{{ $product->name }}</p>
                                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                    {{ Str::limit($product->description, 60) }}
-                                </p>
+                                    {{ Str::limit($product->description, 60) }}</p>
                             </div>
-
                             <p class="mt-3 text-sm font-extrabold text-primary-600">
                                 {{ \Illuminate\Support\Number::currency($product->selling_price ?? 0, 'IDR', 'id') }}
                             </p>
 
-                            <span
-                                class="absolute -top-2 -right-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10 dark:bg-gray-900 dark:text-gray-300">
-                                Stok: {{ $product->stock }}
-                            </span>
+                            {{-- Tanda Stok Habis --}}
+                            @if (!$product->can_be_sold)
+                                <span
+                                    class="absolute -top-2 -right-2 inline-flex items-center rounded-full bg-danger-100 px-2 py-1 text-xs font-medium text-danger-700 ring-1 ring-inset ring-danger-600/10 dark:bg-danger-900 dark:text-danger-300">Habis</span>
+                            @endif
                         </div>
                     @empty
                         @if (empty($this->bundles->all()))

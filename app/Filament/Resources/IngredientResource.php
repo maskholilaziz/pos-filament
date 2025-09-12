@@ -1,0 +1,45 @@
+<?php
+
+namespace App\Filament\Resources;
+
+use App\Filament\Resources\IngredientResource\Pages;
+use App\Models\Ingredient;
+use Filament\Forms;
+use Filament\Forms\Form;
+use Filament\Resources\Resource;
+use Filament\Tables;
+use Filament\Tables\Table;
+
+class IngredientResource extends Resource
+{
+    protected static ?string $model = Ingredient::class;
+    protected static ?string $navigationIcon = 'heroicon-o-beaker';
+    protected static ?string $navigationGroup = 'Manajemen Inventaris';
+    protected static ?string $navigationLabel = 'Bahan Baku';
+
+    public static function form(Form $form): Form
+    {
+        return $form
+            ->schema([
+                Forms\Components\TextInput::make('name')->required()->unique(ignoreRecord: true),
+                Forms\Components\TextInput::make('unit')->required()->helperText('Contoh: gram, ml, pcs'),
+                Forms\Components\TextInput::make('stock')->numeric()->required(),
+            ]);
+    }
+
+    public static function table(Table $table): Table
+    {
+        return $table
+            ->columns([
+                Tables\Columns\TextColumn::make('name')->searchable(),
+                Tables\Columns\TextColumn::make('stock'),
+                Tables\Columns\TextColumn::make('unit'),
+            ])
+            ->actions([Tables\Actions\EditAction::make()]);
+    }
+
+    public static function getPages(): array
+    {
+        return ['index' => Pages\ListIngredients::route('/'), 'create' => Pages\CreateIngredient::route('/create'), 'edit' => Pages\EditIngredient::route('/{record}/edit')];
+    }
+}
