@@ -2,12 +2,14 @@
 
 namespace App\Filament\Pages;
 
+use Filament\Forms;
 use App\Models\Order;
 use App\Models\Bundle;
 use App\Models\Product;
 use App\Models\Category;
 use Filament\Pages\Page;
 use App\Models\Ingredient;
+use App\Models\OrderNumber;
 use Filament\Actions\Action;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -23,6 +25,13 @@ class PointOfSale extends Page
     protected static ?string $navigationLabel = 'POS';
     protected static ?int $navigationSort = -1;
 
+    // State untuk mode dan data
+    public string $mode = 'new'; // 'new' atau 'add'
+    public ?OrderNumber $activeOrderNumber = null;
+    public ?string $activeCustomerName = null;
+    public Collection $cart;
+    public bool $showPosInterface = true;
+
     // State untuk modal
     public $selectedItem = null;
     public string $selectedItemType = '';
@@ -33,13 +42,19 @@ class PointOfSale extends Page
     // State untuk filter & keranjang
     public ?int $selectedCategory = null;
     public string $search = '';
-    public Collection $cart;
     public float $total = 0.00;
     public float $optionsTotal = 0.00;
 
     public function mount(): void
     {
         $this->cart = collect();
+        $this->showPosInterface = true; // Pastikan tampil saat pertama kali dimuat
+    }
+
+    // Mengambil nomor pesanan yang sedang dipakai
+    public function getActiveOrderNumbersProperty()
+    {
+        return OrderNumber::where('status', 'in_use')->orderBy('number_label')->get();
     }
 
     // Mengambil data Kategori
@@ -48,7 +63,7 @@ class PointOfSale extends Page
         return Category::where('is_active', true)->orderBy('name')->get();
     }
 
-    // Mengambil data Produk
+    // Mengambil data Produk dengan pengecekan stok bahan baku
     public function getProductsProperty()
     {
         $products = Product::with(['ingredients', 'optionGroups'])
@@ -59,10 +74,8 @@ class PointOfSale extends Page
             ->orderBy('name')
             ->get();
 
-        // Tambahkan properti virtual 'can_be_sold' ke setiap produk
         $products->each(function ($product) {
             $product->can_be_sold = true;
-            // Jika produk punya resep, cek stok bahan bakunya
             if ($product->ingredients->isNotEmpty()) {
                 foreach ($product->ingredients as $ingredient) {
                     if ($ingredient->stock < $ingredient->pivot->quantity_used) {
@@ -76,20 +89,19 @@ class PointOfSale extends Page
         return $products;
     }
 
-    // Mengambil data Paket Promo yang aktif
+    // Mengambil data Paket Promo dengan pengecekan stok bahan baku komponen
     public function getBundlesProperty()
     {
         $today = now()->toDateString();
-        $bundles = Bundle::with('products.ingredients') // Eager load resep dari komponen
+        $bundles = Bundle::with('products.ingredients')
             ->where('is_active', true)
-            // ->where(function ($query) use ($today) {
-            //     $query->where(function ($subQuery) use ($today) {
-            //         $subQuery->where('start_date', '<=', $today)->where('end_date', '>=', $today);
-            //     })
-            //         ->orWhere(function ($subQuery) {
-            //             $subQuery->whereNull('start_date')->whereNull('end_date');
-            //         });
-            // })
+            ->where(function ($query) use ($today) {
+                $query->where(function ($subQuery) use ($today) {
+                    $subQuery->where('start_date', '<=', $today)->where('end_date', '>=', $today);
+                })->orWhere(function ($subQuery) {
+                    $subQuery->whereNull('start_date')->whereNull('end_date');
+                });
+            })
             ->when($this->search, fn($q) => $q->where('name', 'like', '%' . $this->search . '%'))
             ->when($this->selectedCategory, fn($q) => $q->whereRaw('1 = 0'))
             ->orderBy('name')
@@ -98,17 +110,39 @@ class PointOfSale extends Page
         $bundles->each(function ($bundle) {
             $bundle->can_be_sold = true;
             foreach ($bundle->products as $product) {
-                // Cek resep dari setiap produk di dalam bundle
                 foreach ($product->ingredients as $ingredient) {
                     if ($ingredient->stock < $ingredient->pivot->quantity_used * $product->pivot->quantity) {
                         $bundle->can_be_sold = false;
-                        return false; // Hentikan loop untuk bundle ini
+                        return false;
                     }
                 }
             }
         });
 
         return $bundles;
+    }
+
+    // Mengubah mode antara 'Pesanan Baru' dan 'Tambah Pesanan'
+    public function setMode(string $mode): void
+    {
+        $this->mode = $mode;
+        $this->reset('activeOrderNumber', 'total');
+        $this->cart = collect();
+        // Sembunyikan POS interface saat di mode 'add' sebelum nomor dipilih
+        $this->showPosInterface = ($mode === 'new');
+    }
+
+    // Memilih pesanan aktif yang akan ditambahi
+    public function selectActiveOrderNumber(int $id): void
+    {
+        $this->activeOrderNumber = OrderNumber::with('orders')->find($id);
+        $this->cart = collect();
+
+        // Ambil nama customer dari pesanan pertama
+        $firstOrder = $this->activeOrderNumber->orders()->orderBy('created_at', 'asc')->first();
+        $this->activeCustomerName = $firstOrder ? $firstOrder->customer_name : 'Customer';
+
+        $this->showPosInterface = true;
     }
 
     public function selectCategory(?int $categoryId = null): void
@@ -141,14 +175,14 @@ class PointOfSale extends Page
 
         foreach ($this->selectedItem->optionGroups as $group) {
             if (isset($this->selectedOptions[$group->id])) {
-                if (is_array($this->selectedOptions[$group->id])) { // Checkbox
+                if (is_array($this->selectedOptions[$group->id])) {
                     foreach ($this->selectedOptions[$group->id] as $optionId => $value) {
                         if ($value) {
                             $option = $group->options->find($optionId);
                             if ($option) $this->optionsTotal += $option->price;
                         }
                     }
-                } else { // Radio
+                } else {
                     $optionId = $this->selectedOptions[$group->id];
                     $option = $group->options->find($optionId);
                     if ($option) $this->optionsTotal += $option->price;
@@ -355,16 +389,41 @@ class PointOfSale extends Page
         $this->calculateTotal();
     }
 
+    // Menampilkan tombol dan form pembayaran
     protected function getActions(): array
     {
         return [
-            'process_payment' => Action::make('process_payment')->label('Proses Pembayaran')->color('success')->icon('heroicon-o-currency-dollar')->requiresConfirmation()->modalHeading('Konfirmasi Pembayaran')
-                ->form([
-                    TextInput::make('customer_name')->label('Nama Pelanggan')->default('Pelanggan'),
-                    TextInput::make('amount_paid')->label('Uang Dibayar')->numeric()->required()->prefix('Rp'),
-                ])
+            'process_payment' => Action::make('process_payment')
+                ->label('Proses Pembayaran')
+                ->color('success')
+                ->icon('heroicon-o-currency-dollar')
+                ->form(function () {
+                    $form = [];
+
+                    if ($this->mode === 'new') {
+                        $form[] = Forms\Components\Select::make('order_number_id')
+                            ->label('Nomor Pesanan')
+                            ->options(OrderNumber::where('status', 'available')->pluck('number_label', 'id'))
+                            ->required()
+                            ->searchable();
+                        $form[] = Forms\Components\TextInput::make('customer_name')->required()->default('Customer');
+                    } else {
+                        $form[] = Forms\Components\TextInput::make('customer_name')
+                            ->default($this->activeCustomerName)
+                            ->required()
+                            ->disabled();
+                    }
+
+                    $form[] = Forms\Components\TextInput::make('amount_paid')
+                        ->numeric()
+                        ->required()
+                        ->prefix('Rp')
+                        ->rules(['min:' . $this->total]);
+
+                    return $form;
+                })
                 ->action(fn(array $data) => $this->processPayment($data))
-                ->disabled($this->cart->isEmpty()),
+                ->disabled($this->cart->isEmpty() || ($this->mode === 'add' && !$this->activeOrderNumber)),
         ];
     }
 
@@ -374,16 +433,28 @@ class PointOfSale extends Page
             Notification::make()->title($this->cart->isEmpty() ? 'Keranjang kosong!' : 'Uang pembayaran tidak cukup!')->danger()->send();
             return;
         }
+
+        $orderNumberId = ($this->mode === 'new') ? $data['order_number_id'] : $this->activeOrderNumber->id;
+
+        // Ambil nama customer berdasarkan mode
+        $customerName = ($this->mode === 'new') ? $data['customer_name'] : $this->activeCustomerName;
+
         try {
-            DB::transaction(function () use ($data) {
+            DB::transaction(function () use ($data, $orderNumberId, $customerName) {
                 $order = Order::create([
-                    'invoice_number' => 'INV-' . time(),
-                    'user_id'        => Auth::id(),
-                    'customer_name'  => $data['customer_name'],
-                    'total_price'    => $this->total,
-                    'amount_paid'    => $data['amount_paid'],
-                    'change'         => $data['amount_paid'] - $this->total,
+                    'invoice_number'      => 'INV-' . time(),
+                    'order_number_id'     => $orderNumberId,
+                    'user_id'             => Auth::id(),
+                    'customer_name'       => $customerName, // Gunakan variabel yang sudah pasti ada
+                    'total_price'         => $this->total,
+                    'amount_paid'         => $data['amount_paid'],
+                    'change'              => $data['amount_paid'] - $this->total,
+                    'status'              => 'preparing',
                 ]);
+
+                if ($this->mode === 'new') {
+                    OrderNumber::find($orderNumberId)->update(['status' => 'in_use']);
+                }
 
                 foreach ($this->cart as $item) {
                     $order->items()->create([
@@ -416,9 +487,14 @@ class PointOfSale extends Page
                     }
                 }
             });
-            $change = $data['amount_paid'] - $this->total;
-            Notification::make()->title('Transaksi Berhasil!')->body('Kembalian: ' . number_format($change))->success()->send();
-            $this->clearCart();
+
+            Notification::make()->title('Pembayaran Berhasil!')->success()->send();
+            $this->reset('cart', 'total');
+            if ($this->mode === 'add') {
+                $this->selectActiveOrderNumber($this->activeOrderNumber->id);
+            } else {
+                $this->setMode('new');
+            }
         } catch (\Exception $e) {
             Notification::make()->title('Transaksi Gagal!')->body($e->getMessage())->danger()->send();
         }
