@@ -4,7 +4,7 @@
   "service": "app",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
 
-  // Port forwarding untuk aplikasi dan Vite
+  // ... (bagian port forwarding tidak perlu diubah) ...
   "forwardPorts": [8000, 5173],
   "portsAttributes": {
     "8000": {
@@ -17,10 +17,10 @@
     }
   },
 
-  // Perintah yang dijalankan setelah container dibuat
+  // ... (bagian postCreateCommand tidak perlu diubah) ...
   "postCreateCommand": "composer install && npm install",
 
-  // Kustomisasi untuk VS Code
+  // ... (bagian kustomisasi tidak perlu diubah) ...
   "customizations": {
     "vscode": {
       "extensions": [
@@ -32,6 +32,6 @@
     }
   },
 
-  // Jalankan perintah sebagai user non-root
-  "remoteUser": "sail"
+  // Jalankan perintah sebagai user 'vscode'
+  "remoteUser": "vscode" // <-- DIUBAH DI SINI
 }

@@ -1,10 +1,6 @@
 services:
-  # Layanan aplikasi Laravel Anda
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile # Asumsikan Anda menggunakan Dockerfile standar Sail
-    image: sail-8.2/app
+    image: laravelsail/php82-composer:latest # <-- TAMBAHKAN/UBAH INI
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     ports:
