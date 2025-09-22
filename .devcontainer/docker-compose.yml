@@ -1,0 +1,49 @@
+services:
+  # Layanan aplikasi Laravel Anda
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile # Asumsikan Anda menggunakan Dockerfile standar Sail
+    image: sail-8.2/app
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '${APP_PORT:-80}:80'
+      - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
+    environment:
+      WWWUSER: '${WWWUSER}'
+      LARAVEL_SAIL: 1
+      XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
+      XDEBUG_CONFIG: '${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}'
+    volumes:
+      - '.:/var/www/html'
+    networks:
+      - sail
+    depends_on:
+      - db
+
+  # Layanan Database MySQL
+  db:
+    image: 'mysql:8.0'
+    ports:
+      - '${FORWARD_DB_PORT:-3306}:3306'
+    environment:
+      MYSQL_DATABASE: 'pos' # <-- DIUBAH: Nama database Anda
+      MYSQL_USER: 'root' # <-- DIUBAH: User Anda
+      MYSQL_ALLOW_EMPTY_PASSWORD: 'yes' # <-- DIUBAH: Mengizinkan password kosong untuk root
+    volumes:
+      - 'sail-mysql:/var/lib/mysql'
+    networks:
+      - sail
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-p"]
+      retries: 3
+      timeout: 5s
+
+networks:
+  sail:
+    driver: bridge
+
+volumes:
+  sail-mysql:
+    driver: local

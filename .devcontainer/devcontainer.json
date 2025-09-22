@@ -1,0 +1,37 @@
+{
+  "name": "Laravel Sail (PHP 8.2)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+  // Port forwarding untuk aplikasi dan Vite
+  "forwardPorts": [8000, 5173],
+  "portsAttributes": {
+    "8000": {
+      "label": "Application",
+      "onAutoForward": "openPreview"
+    },
+    "5173": {
+      "label": "Vite",
+      "onAutoForward": "silent"
+    }
+  },
+
+  // Perintah yang dijalankan setelah container dibuat
+  "postCreateCommand": "composer install && npm install",
+
+  // Kustomisasi untuk VS Code
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bmewburn.vscode-intelephense-client",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode",
+        "onecentlin.laravel-blade"
+      ]
+    }
+  },
+
+  // Jalankan perintah sebagai user non-root
+  "remoteUser": "sail"
+}
