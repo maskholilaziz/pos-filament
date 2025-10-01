@@ -316,3 +316,17 @@
         </div>
     @endif
 </x-filament-panels::page>
+
+<script>
+    // Dengarkan event 'print-receipt' yang dikirim dari backend
+    document.addEventListener('print-receipt', (event) => {
+        // Ambil orderId dari event
+        const orderId = event.detail.orderId;
+
+        // Buat URL untuk halaman cetak struk
+        const url = `{{ route('print.receipt', ['order' => ':orderId']) }}`.replace(':orderId', orderId);
+
+        // Buka URL di tab baru
+        window.open(url, '_blank');
+    });
+</script>

@@ -1,35 +1,41 @@
 <x-filament-panels::page>
     <div wire:poll.5s>
+        {{-- PEMILIHAN STASIUN --}}
+        <div class="mb-4 flex flex-wrap gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+            @foreach ($stations as $station)
+                <button wire:click="selectStation({{ $station->id }})" @class([
+                    'px-4 py-2 text-sm font-bold rounded-md transition',
+                    'bg-primary-600 text-white' => $stationId == $station->id,
+                    'bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200' =>
+                        $stationId != $station->id,
+                ])>
+                    {{ $station->name }}
+                </button>
+            @endforeach
+        </div>
+
+        {{-- PAPAN PESANAN --}}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            @forelse($this->activeOrders as $orderNumber)
+            @forelse($this->activeOrders as $numberLabel => $items)
                 <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col h-full">
                     <div class="flex-grow">
-                        {{-- HEADER KARTU --}}
                         <div class="text-center mb-4 pb-4 border-b dark:border-gray-700">
-                            <h3 class="text-2xl font-bold text-primary-600 dark:text-primary-500">
-                                Nomor {{ $orderNumber->number_label }}
+                            <h3 class="text-2xl font-bold text-primary-600 dark:text-primary-500">Nomor
+                                {{ $numberLabel }}
                             </h3>
-                            <p class="text-xs text-gray-500">
-                                {{ $orderNumber->orders->first()->created_at->format('H:i') }}
-                                -
-                                {{ $orderNumber->orders->first()->customer_name }}
-                            </p>
+                            <p class="text-xs text-gray-500">{{ $items->first()->order->created_at->format('H:i') }}</p>
                         </div>
 
-                        {{-- DAFTAR ITEM --}}
                         <div class="space-y-3">
-                            @foreach ($orderNumber->orders->flatMap->items as $item)
-                                <div @class([
-                                    'p-2 rounded-md transition',
-                                    'bg-gray-100 dark:bg-gray-700/50' => $item->status === 'preparing',
-                                    'bg-green-100 dark:bg-green-800/50' => $item->status === 'ready',
-                                ])>
+                            @foreach ($items as $item)
+                                <div class="p-2 rounded-md bg-gray-100 dark:bg-gray-700/50">
                                     <div class="flex justify-between items-start">
                                         <div class="flex-grow mr-2">
                                             <p class="font-bold text-gray-800 dark:text-gray-200">
                                                 {{ $item->product_name }}
                                             </p>
-                                            {{-- Tampilkan detail opsi dan catatan --}}
+
+                                            {{-- ===== BLOK KODE BARU UNTUK MENAMPILKAN DETAIL ===== --}}
                                             @if ($item->selected_options || $item->notes)
                                                 <div
                                                     class="mt-1 text-xs text-gray-500 dark:text-gray-400 pl-2 border-l-2 dark:border-gray-600">
@@ -77,41 +83,25 @@
                                                     {!! implode('<br>', $details) !!}
                                                 </div>
                                             @endif
+                                            {{-- ================================================= --}}
                                         </div>
-                                        <p class="flex-shrink-0 text-lg font-bold text-gray-800 dark:text-gray-200">
-                                            x{{ $item->quantity }}</p>
+                                        <p class="flex-shrink-0 text-lg font-bold">x{{ $item->quantity }}</p>
                                     </div>
-                                    {{-- Tombol Aksi per Item --}}
-                                    <div class="mt-2 flex items-center justify-end gap-2">
-                                        @if ($item->status === 'preparing')
-                                            <x-filament::button size="xs" color="success"
-                                                wire:click="updateItemStatus({{ $item->id }}, 'ready')">
-                                                Tandai Siap
-                                            </x-filament::button>
-                                        @elseif($item->status === 'ready')
-                                            <x-filament::button size="xs" color="gray"
-                                                wire:click="updateItemStatus({{ $item->id }}, 'preparing')">
-                                                Batal Siap
-                                            </x-filament::button>
-                                        @endif
+                                    <div class="mt-2 flex justify-end">
+                                        <x-filament::button size="xs" color="success"
+                                            wire:click="markItemAsReady({{ $item->id }})">
+                                            Siap
+                                        </x-filament::button>
                                     </div>
                                 </div>
                             @endforeach
                         </div>
                     </div>
-
-                    {{-- FOOTER KARTU --}}
-                    <div class="mt-6 pt-4 border-t dark:border-gray-700">
-                        <x-filament::button wire:click="markAsCompleted({{ $orderNumber->id }})" color="primary"
-                            class="w-full">
-                            Selesai Diantar & Kosongkan Nomor
-                        </x-filament::button>
-                    </div>
                 </div>
             @empty
                 <div class="col-span-full text-center py-12">
                     <x-heroicon-o-check-circle class="h-16 w-16 mx-auto text-gray-400" />
-                    <p class="mt-4 text-gray-500">Tidak ada pesanan aktif saat ini.</p>
+                    <p class="mt-4 text-gray-500">Tidak ada pesanan aktif untuk stasiun ini.</p>
                 </div>
             @endforelse
         </div>

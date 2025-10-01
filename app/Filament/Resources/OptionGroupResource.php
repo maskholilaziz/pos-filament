@@ -14,7 +14,7 @@ class OptionGroupResource extends Resource
 {
     protected static ?string $model = OptionGroup::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-queue-list';
+    protected static ?string $navigationIcon = 'heroicon-o-rectangle-group';
     protected static ?string $navigationGroup = 'Manajemen Produk';
     protected static ?string $navigationLabel = 'Grup Opsi';
     protected static ?int $navigationSort = 3;

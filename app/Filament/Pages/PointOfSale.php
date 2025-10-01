@@ -6,15 +6,18 @@ use Filament\Forms;
 use App\Models\Order;
 use App\Models\Bundle;
 use App\Models\Product;
+use App\Models\Station;
 use App\Models\Category;
 use Filament\Pages\Page;
 use App\Models\Ingredient;
 use App\Models\OrderNumber;
 use Filament\Actions\Action;
 use Illuminate\Support\Carbon;
+use App\Events\PrintKitchenTicket;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Event;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 
@@ -435,27 +438,29 @@ class PointOfSale extends Page
         }
 
         $orderNumberId = ($this->mode === 'new') ? $data['order_number_id'] : $this->activeOrderNumber->id;
-
-        // Ambil nama customer berdasarkan mode
         $customerName = ($this->mode === 'new') ? $data['customer_name'] : $this->activeCustomerName;
 
         try {
+            $order = null;
             DB::transaction(function () use ($data, $orderNumberId, $customerName) {
+                // 1. Buat record transaksi utama (Order)
                 $order = Order::create([
                     'invoice_number'      => 'INV-' . time(),
                     'order_number_id'     => $orderNumberId,
                     'user_id'             => Auth::id(),
-                    'customer_name'       => $customerName, // Gunakan variabel yang sudah pasti ada
+                    'customer_name'       => $customerName,
                     'total_price'         => $this->total,
                     'amount_paid'         => $data['amount_paid'],
                     'change'              => $data['amount_paid'] - $this->total,
                     'status'              => 'preparing',
                 ]);
 
+                // Jika ini pesanan baru, tandai nomor pesanan sebagai 'sedang dipakai'
                 if ($this->mode === 'new') {
                     OrderNumber::find($orderNumberId)->update(['status' => 'in_use']);
                 }
 
+                // 2. Simpan setiap item di keranjang dan kurangi stok bahan baku
                 foreach ($this->cart as $item) {
                     $order->items()->create([
                         'product_id'        => $item['item_type'] === 'product' ? $item['item_id'] : null,
@@ -465,8 +470,10 @@ class PointOfSale extends Page
                         'total_price'       => ($item['price'] + $item['options_price']) * $item['quantity'],
                         'selected_options'  => $item['options_raw'],
                         'notes'             => $item['notes'],
+                        'status'            => 'preparing', // Status awal untuk setiap item
                     ]);
 
+                    // Logika Pengurangan Stok Bahan Baku
                     if ($item['item_type'] === 'product') {
                         $product = Product::with('ingredients')->find($item['item_id']);
                         if ($product) {
@@ -486,9 +493,29 @@ class PointOfSale extends Page
                         }
                     }
                 }
+
+                // 3. (Placeholder) Logika untuk Memicu Printer
+                // Kode ini mengelompokkan item berdasarkan stasiunnya
+                $itemsByStation = $order->items()->with('product.station')->get()->groupBy('product.station.id');
+
+                foreach ($itemsByStation as $stationId => $items) {
+                    if (is_null($stationId) || $stationId == '') continue;
+
+                    $station = Station::find($stationId);
+                    if ($station && $station->output_type === 'printer') {
+                        // PASTIKAN BARIS INI TIDAK DIKOMENTARI
+                        Event::dispatch(new PrintKitchenTicket($order, $station, $items));
+                    }
+                }
             });
 
             Notification::make()->title('Pembayaran Berhasil!')->success()->send();
+
+            if ($order) {
+                $this->dispatch('print-receipt', orderId: $order->id);
+            }
+
+            // Reset state setelah transaksi berhasil
             $this->reset('cart', 'total');
             if ($this->mode === 'add') {
                 $this->selectActiveOrderNumber($this->activeOrderNumber->id);

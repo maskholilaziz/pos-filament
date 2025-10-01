@@ -29,6 +29,10 @@ class ProductResource extends Resource
                 Forms\Components\Textarea::make('description')->columnSpanFull(),
                 Forms\Components\TextInput::make('purchase_price')->label('Harga Beli')->numeric()->prefix('Rp')->default(0),
                 Forms\Components\TextInput::make('selling_price')->label('Harga Jual')->numeric()->prefix('Rp')->required(),
+                Forms\Components\Select::make('station_id')
+                    ->relationship('station', 'name')
+                    ->required()
+                    ->label('Stasiun Dapur'),
                 Forms\Components\Toggle::make('is_active')->label('Aktifkan Produk')->default(true),
 
                 Forms\Components\Section::make('Resep / Bahan Baku')
